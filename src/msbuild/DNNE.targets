@@ -92,6 +92,10 @@ DNNE.targets
       <OutputFileName>$(DnneNativeExportsBinaryName).lib</OutputFileName>
     </DnneNativeExportsInput>
 
+    <ResolvedFileToPublish Include="$(DnneNativeExportsBinaryPath)$(DnneNativeExportsBinaryName)$(DnneNativeBinaryExt)">
+      <RelativePath>$(DnneNativeExportsBinaryName)$(DnneNativeBinaryExt)</RelativePath>
+    </ResolvedFileToPublish>
+
     <!-- Add outputs and general glob to help with project cleanup -->
     <Clean Include="@(DnneNativeExportsInput->'$(DnneNativeExportsBinaryPath)%(OutputFileName)');$(DnneNativeExportsBinaryPath)$(DnneNativeExportsBinaryName).*"/>
   </ItemGroup>

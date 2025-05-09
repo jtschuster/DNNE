@@ -92,10 +92,6 @@ DNNE.targets
       <OutputFileName>$(DnneNativeExportsBinaryName).lib</OutputFileName>
     </DnneNativeExportsInput>
 
-    <ResolvedFileToPublish Include="$(DnneNativeExportsBinaryPath)$(DnneNativeExportsBinaryName)$(DnneNativeBinaryExt)">
-      <RelativePath>$(DnneNativeExportsBinaryName)$(DnneNativeBinaryExt)</RelativePath>
-    </ResolvedFileToPublish>
-
     <!-- Add outputs and general glob to help with project cleanup -->
     <Clean Include="@(DnneNativeExportsInput->'$(DnneNativeExportsBinaryPath)%(OutputFileName)');$(DnneNativeExportsBinaryPath)$(DnneNativeExportsBinaryName).*"/>
   </ItemGroup>
@@ -128,12 +124,14 @@ DNNE.targets
       they flow through project references.
   -->
   <ItemGroup Condition="'$(DnneBuildExports)' == 'true' AND '$(DnneAddGeneratedBinaryToProject)' == 'true'">
-    <None Include="@(DnneNativeExportsInput->'$(DnneNativeExportsBinaryPath)%(OutputFileName)')">
+    <Content Include="@(DnneNativeExportsInput->'$(DnneNativeExportsBinaryPath)%(OutputFileName)')">
       <Link>%(Filename)%(Extension)</Link>
+      <TargetPath>%(Filename)%(Extension)</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
-    </None>
-    <None Include="$(DnneGeneratedBinPath)/$(DnneNativeExportsBinaryName).pdb" Condition="$([MSBuild]::IsOsPlatform('Windows'))">
+      <PublishState>Included</PublishState>
+    </Content>
+    <None Include="$(DnneGeneratedBinPath)/$(DnneNativeExportsBinaryName).pdb" Condition="$([MSBuild]::IsOsPlatform('Windows')) AND '$(DnneBuildExports)' == 'true'">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>

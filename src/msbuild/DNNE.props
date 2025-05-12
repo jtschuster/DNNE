@@ -24,10 +24,12 @@ DNNE.props
 -->
 <Project>
   <PropertyGroup>
+    <!-- When true, generates the header source files for compiling against the exports -->
     <DnneGenerateExports>true</DnneGenerateExports>
 
     <!-- If the build is disabled, the generated source is considered the output
         and emitted in the output directory as if it were a binary. -->
+    <!-- When true, builds the DNNE native binary (ProjectNameNE.dll) -->
     <DnneBuildExports>true</DnneBuildExports>
 
     <!-- The name of the resulting native binary. This should be the name of the binary
@@ -42,7 +44,9 @@ DNNE.props
     <!-- Logging level passed to output from the DNNE build process. -->
     <DnneMSBuildLogging>low</DnneMSBuildLogging>
 
-    <!-- Add the generated binary to the project contents -->
+    <!-- When true, adds the files produced by DNNE to the project output path and flow them
+        through ProjectReferences. May include only the headers or only the native binary
+        files depending on DnneBuildExports and DnneGenerateExports. -->
     <DnneAddGeneratedBinaryToProject>false</DnneAddGeneratedBinaryToProject>
 
     <!-- Enable a workaround for https://github.com/dotnet/sdk/issues/1675 -->

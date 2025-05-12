@@ -123,14 +123,14 @@ DNNE.targets
       Include all output artifacts in the project's None Items so
       they flow through project references.
   -->
-  <ItemGroup Condition="'$(DnneBuildExports)' == 'true' AND '$(DnneAddGeneratedBinaryToProject)' == 'true'">
-    <Content Include="@(DnneNativeExportsInput->'$(DnneNativeExportsBinaryPath)%(OutputFileName)')">
+  <ItemGroup Condition="'$(DnneAddGeneratedBinaryToProject)' == 'true'">
+    <None Include="@(DnneNativeExportsInput->'$(DnneNativeExportsBinaryPath)%(OutputFileName)')">
       <Link>%(Filename)%(Extension)</Link>
       <TargetPath>%(Filename)%(Extension)</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
       <PublishState>Included</PublishState>
-    </Content>
+    </None>
     <None Include="$(DnneGeneratedBinPath)/$(DnneNativeExportsBinaryName).pdb" Condition="$([MSBuild]::IsOsPlatform('Windows')) AND '$(DnneBuildExports)' == 'true'">
       <Link>%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

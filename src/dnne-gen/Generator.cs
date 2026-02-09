@@ -20,7 +20,6 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Collections.Specialized;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -29,8 +28,6 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Xml;
 
 namespace DNNE
@@ -48,6 +45,12 @@ namespace DNNE
 
     class Generator : IDisposable
     {
+        public enum OutputLanguage
+        {
+            C99,
+            Rust,
+        }
+
         private bool isDisposed = false;
 
         private readonly ICustomAttributeTypeProvider<KnownType> typeResolver = new TypeResolver();
@@ -58,9 +61,11 @@ namespace DNNE
         private readonly Scope moduleScope;
         private readonly IDictionary<TypeDefinitionHandle, Scope> typePlatformScenarios = new Dictionary<TypeDefinitionHandle, Scope>();
         private readonly Dictionary<string, string> loadedXmlDocumentation;
+        private readonly OutputLanguage language;
 
-        public Generator(string validAssemblyPath, string xmlDocFile)
+        public Generator(string validAssemblyPath, string xmlDocFile, OutputLanguage language)
         {
+            this.language = language;
             this.assemblyPath = validAssemblyPath;
             this.peReader = new PEReader(File.OpenRead(this.assemblyPath));
             this.mdReader = this.peReader.GetMetadataReader(MetadataReaderOptions.None);
@@ -76,17 +81,11 @@ namespace DNNE
 
         public void Emit(string outputFile)
         {
-            var generatedCode = new StringWriter();
+            using var generatedCode = new StringWriter();
             Emit(generatedCode);
 
-            // Check if the file exists
-            if (File.Exists(outputFile))
-            {
-                File.Delete(outputFile);
-            }
-
             // Write the generated code to the output file.
-            using (var outputFileStream = new StreamWriter(File.OpenWrite(outputFile)))
+            using (var outputFileStream = new StreamWriter(File.Create(outputFile)))
             {
                 outputFileStream.Write(generatedCode.ToString());
             }
@@ -120,9 +119,9 @@ namespace DNNE
                     if (currAttrType == ExportType.None)
                     {
                         // Check if method has other supported attributes.
-                        if (this.TryGetC99DeclCodeAttributeValue(customAttr, out string c99Decl))
+                        if (this.TryGetLanguageDeclCodeAttributeValue(customAttr, out string declCode))
                         {
-                            additionalCodeStatements.Add(c99Decl);
+                            additionalCodeStatements.Add(declCode);
                         }
                         else if (this.TryGetOSPlatformAttributeValue(customAttr, out bool isSupported, out OSPlatform scen))
                         {
@@ -219,11 +218,18 @@ namespace DNNE
                 MethodSignature<string> signature;
                 try
                 {
-                    var typeProvider = new C99TypeProvider();
-
-                    signature = methodDef.DecodeSignature(typeProvider, null);
-
-                    typeProvider.ThrowIfUnsupportedLastPrimitiveType();
+                    if (this.language == OutputLanguage.Rust)
+                    {
+                        var typeProvider = new RustTypeProvider();
+                        signature = methodDef.DecodeSignature(typeProvider, null);
+                        typeProvider.ThrowIfUnsupportedLastPrimitiveType();
+                    }
+                    else
+                    {
+                        var typeProvider = new C99TypeProvider();
+                        signature = methodDef.DecodeSignature(typeProvider, null);
+                        typeProvider.ThrowIfUnsupportedLastPrimitiveType();
+                    }
                 }
                 catch (NotSupportedTypeException nste)
                 {
@@ -255,27 +261,38 @@ namespace DNNE
                     foreach (var attr in param.GetCustomAttributes())
                     {
                         CustomAttribute custAttr = this.mdReader.GetCustomAttribute(attr);
-                        if (TryGetC99TypeAttributeValue(custAttr, out string c99Type))
+                        if (TryGetLanguageTypeAttributeValue(custAttr, out string typeOverride))
                         {
-                            // Overridden type defined.
                             if (argIndex == ReturnIndex)
                             {
-                                returnType = c99Type;
+                                returnType = typeOverride;
                             }
                             else
                             {
                                 Debug.Assert(argIndex >= 0);
-                                argumentTypes[argIndex] = c99Type;
+                                argumentTypes[argIndex] = typeOverride;
                             }
                         }
-                        else if (TryGetC99DeclCodeAttributeValue(custAttr, out string c99Decl))
+                        else if (TryGetLanguageDeclCodeAttributeValue(custAttr, out string declCode))
                         {
-                            additionalCodeStatements.Add(c99Decl);
+                            additionalCodeStatements.Add(declCode);
                         }
                     }
                 }
 
                 var xmlDoc = FindXmlDoc(enclosingTypeName.Replace('+', '.') + Type.Delimiter + managedMethodName, argumentTypes);
+
+                // In Rust mode, skip exports that have non-primitive value types
+                // without a type override (indicated by the "/* SUPPLY TYPE */" placeholder).
+                if (this.language == OutputLanguage.Rust)
+                {
+                    bool hasUnsuppliedType = returnType.Contains("/* SUPPLY TYPE */")
+                        || argumentTypes.Any(t => t.Contains("/* SUPPLY TYPE */"));
+                    if (hasUnsuppliedType)
+                    {
+                        continue;
+                    }
+                }
 
                 exportedMethods.Add(new ExportedMethod()
                 {
@@ -308,7 +325,14 @@ namespace DNNE
             }
 
             string assemblyName = this.mdReader.GetString(this.mdReader.GetAssemblyDefinition().Name);
-            EmitC99(outputStream, assemblyName, exportedMethods, additionalCodeStatements);
+            if (this.language == OutputLanguage.Rust)
+            {
+                RustEmitter.Emit(outputStream, assemblyName, exportedMethods, additionalCodeStatements);
+            }
+            else
+            {
+                C99Emitter.Emit(outputStream, assemblyName, exportedMethods, additionalCodeStatements);
+            }
         }
 
         private static Dictionary<string, string> LoadXmlDocumentation(string xmlDocumentation)
@@ -366,13 +390,6 @@ namespace DNNE
             this.isDisposed = true;
         }
 
-        private enum ExportType
-        {
-            None,
-            Export,
-            UnmanagedCallersOnly,
-        }
-
         private ExportType GetExportAttributeType(CustomAttribute attribute)
         {
             if (IsAttributeType(this.mdReader, attribute, "DNNE", "ExportAttribute"))
@@ -409,20 +426,22 @@ namespace DNNE
             return name;
         }
 
-        private bool TryGetC99TypeAttributeValue(CustomAttribute attribute, out string c99Type)
+        private bool TryGetLanguageTypeAttributeValue(CustomAttribute attribute, out string typeValue)
         {
-            c99Type = IsAttributeType(this.mdReader, attribute, "DNNE", "C99TypeAttribute")
+            string attrName = this.language == OutputLanguage.Rust ? "RustTypeAttribute" : "C99TypeAttribute";
+            typeValue = IsAttributeType(this.mdReader, attribute, "DNNE", attrName)
                 ? GetFirstFixedArgAsStringValue(this.typeResolver, attribute)
                 : null;
-            return !string.IsNullOrEmpty(c99Type);
+            return !string.IsNullOrEmpty(typeValue);
         }
 
-        private bool TryGetC99DeclCodeAttributeValue(CustomAttribute attribute, out string c99Decl)
+        private bool TryGetLanguageDeclCodeAttributeValue(CustomAttribute attribute, out string declCode)
         {
-            c99Decl = IsAttributeType(this.mdReader, attribute, "DNNE", "C99DeclCodeAttribute")
+            string attrName = this.language == OutputLanguage.Rust ? "RustDeclCodeAttribute" : "C99DeclCodeAttribute";
+            declCode = IsAttributeType(this.mdReader, attribute, "DNNE", attrName)
                 ? GetFirstFixedArgAsStringValue(this.typeResolver, attribute)
                 : null;
-            return !string.IsNullOrEmpty(c99Decl);
+            return !string.IsNullOrEmpty(declCode);
         }
 
         private Scope GetTypeOSPlatformScope(MethodDefinition methodDef)
@@ -560,326 +579,6 @@ namespace DNNE
             return reader.StringComparer.Equals(namespaceMaybe, targetNamespace) && reader.StringComparer.Equals(nameMaybe, targetName);
         }
 
-        private const string SafeMacroRegEx = "[^a-zA-Z0-9_]";
-
-        private static void EmitC99(TextWriter outputStream, string assemblyName, IEnumerable<ExportedMethod> exports, IEnumerable<string> additionalCodeStatements)
-        {
-            // Convert the assembly name into a supported string for C99 macros.
-            var assemblyNameMacroSafe = Regex.Replace(assemblyName, SafeMacroRegEx, "_");
-            var generatedHeaderDefine = $"__DNNE_GENERATED_HEADER_{assemblyNameMacroSafe.ToUpperInvariant()}__";
-            var compileAsSourceDefine = "DNNE_COMPILE_AS_SOURCE";
-
-            // Emit declaration preamble
-            outputStream.WriteLine(
-$@"//
-// Auto-generated by dnne-gen
-//
-// .NET Assembly: {assemblyName}
-//
-
-//
-// Declare exported functions
-//
-#ifndef {generatedHeaderDefine}
-#define {generatedHeaderDefine}
-
-#include <stddef.h>
-#include <stdint.h>
-#ifdef {compileAsSourceDefine}
-    #include <dnne.h>
-#else
-    // When used as a header file, the assumption is
-    // dnne.h will be next to this file.
-    #include ""dnne.h""
-#endif // !{compileAsSourceDefine}
-");
-
-            // Emit additional code statements
-            if (additionalCodeStatements.Any())
-            {
-                outputStream.WriteLine(
-$@"//
-// Additional code provided by user
-//");
-                foreach (var stmt in additionalCodeStatements)
-                {
-                    outputStream.WriteLine(stmt);
-                }
-
-                outputStream.WriteLine();
-            }
-
-            var implStream = new StringWriter();
-
-            // Emit definition preamble
-            implStream.WriteLine(
-$@"//
-// Define exported functions
-//
-#ifdef {compileAsSourceDefine}
-
-#ifdef DNNE_WINDOWS
-    #ifdef _WCHAR_T_DEFINED
-        typedef wchar_t char_t;
-    #else
-        typedef unsigned short char_t;
-    #endif
-#else
-    typedef char char_t;
-#endif
-
-//
-// Forward declarations
-//
-
-extern void* get_callable_managed_function(
-    const char_t* dotnet_type,
-    const char_t* dotnet_type_method,
-    const char_t* dotnet_delegate_type);
-
-extern void* get_fast_callable_managed_function(
-    const char_t* dotnet_type,
-    const char_t* dotnet_type_method);
-");
-
-            // Emit string table
-            implStream.WriteLine(
-@"//
-// String constants
-//
-");
-            int count = 1;
-            var map = new StringDictionary();
-            foreach (var method in exports)
-            {
-                if (map.ContainsKey(method.EnclosingTypeName))
-                {
-                    continue;
-                }
-
-                string id = $"t{count++}_name";
-                implStream.WriteLine(
-$@"#ifdef DNNE_TARGET_NET_FRAMEWORK
-    static const char_t* {id} = DNNE_STR(""{method.EnclosingTypeName}"");
-#else
-    static const char_t* {id} = DNNE_STR(""{method.EnclosingTypeName}, {assemblyName}"");
-#endif // !DNNE_TARGET_NET_FRAMEWORK
-");
-                map.Add(method.EnclosingTypeName, id);
-            }
-
-            // Emit the exports
-            implStream.WriteLine(
-@"
-//
-// Exports
-//
-");
-            foreach (var export in exports)
-            {
-                (var preguard, var postguard) = GetC99PlatformGuards(export.Platforms);
-
-                // Create declaration and call signature.
-                string delim = "";
-                var declsig = new StringBuilder();
-                var callsig = new StringBuilder();
-                for (int i = 0; i < export.ArgumentTypes.Length; ++i)
-                {
-                    var argName = export.ArgumentNames[i] ?? $"arg{i}";
-                    declsig.AppendFormat("{0}{1} {2}", delim, export.ArgumentTypes[i], argName);
-                    callsig.AppendFormat("{0}{1}", delim, argName);
-                    delim = ", ";
-                }
-
-                // Special casing for void signature.
-                if (declsig.Length == 0)
-                {
-                    declsig.Append("void");
-                }
-
-                // Special casing for void return.
-                string returnStatementKeyword = "return ";
-                if (export.ReturnType.Equals("void"))
-                {
-                    returnStatementKeyword = string.Empty;
-                }
-
-                string callConv = GetC99CallConv(export.CallingConvention);
-
-                string classNameConstant = map[export.EnclosingTypeName];
-                Debug.Assert(!string.IsNullOrEmpty(classNameConstant));
-
-                // Generate the acquire managed function based on the export type.
-                string acquireManagedFunction;
-                if (export.Type == ExportType.Export)
-                {
-                    acquireManagedFunction =
-$@"const char_t* methodName = DNNE_STR(""{export.MethodName}"");
-        const char_t* delegateType = DNNE_STR(""{export.EnclosingTypeName}+{export.MethodName}Delegate, {assemblyName}"");
-        {export.ExportName}_ptr = ({export.ReturnType}({callConv}*)({declsig}))get_callable_managed_function({classNameConstant}, methodName, delegateType);";
-
-                }
-                else
-                {
-                    Debug.Assert(export.Type == ExportType.UnmanagedCallersOnly);
-                    acquireManagedFunction =
-$@"const char_t* methodName = DNNE_STR(""{export.MethodName}"");
-        {export.ExportName}_ptr = ({export.ReturnType}({callConv}*)({declsig}))get_fast_callable_managed_function({classNameConstant}, methodName);";
-                }
-
-                // Declare export
-                outputStream.WriteLine(
-$@"{preguard}// Computed from {export.EnclosingTypeName}{Type.Delimiter}{export.MethodName}{export.XmlDoc}
-DNNE_EXTERN_C DNNE_API {export.ReturnType} {callConv} {export.ExportName}({declsig});
-{postguard}");
-
-                // Define export in implementation stream
-                implStream.WriteLine(
-$@"{preguard}// Computed from {export.EnclosingTypeName}{Type.Delimiter}{export.MethodName}
-static {export.ReturnType} ({callConv}* {export.ExportName}_ptr)({declsig});
-DNNE_EXTERN_C DNNE_API {export.ReturnType} {callConv} {export.ExportName}({declsig})
-{{
-    if ({export.ExportName}_ptr == NULL)
-    {{
-        {acquireManagedFunction}
-    }}
-    {returnStatementKeyword}{export.ExportName}_ptr({callsig});
-}}
-{postguard}");
-            }
-
-            // Emit implementation closing
-            implStream.Write($"#endif // {compileAsSourceDefine}");
-
-            // Emit output closing for header and merge in implementation
-            outputStream.WriteLine(
-$@"#endif // {generatedHeaderDefine}
-
-{implStream}");
-        }
-
-        private static (string preguard, string postguard) GetC99PlatformGuards(in PlatformSupport platformSupport)
-        {
-            var pre = new StringBuilder();
-            var post = new StringBuilder();
-
-            var postAssembly = ConvertScope(platformSupport.Assembly, ref pre);
-            var postModule = ConvertScope(platformSupport.Module, ref pre);
-            var postType = ConvertScope(platformSupport.Type, ref pre);
-            var postMethod = ConvertScope(platformSupport.Method, ref pre);
-
-            // Append the post guards in reverse order
-            post.Append(postMethod);
-            post.Append(postType);
-            post.Append(postModule);
-            post.Append(postAssembly);
-
-            return (pre.ToString(), post.ToString());
-
-            static string ConvertScope(in Scope scope, ref StringBuilder pre)
-            {
-                (string pre_support, string post_support) = ConvertCollection(scope.Support, "(", ")");
-                (string pre_nosupport, string post_nosupport) = ConvertCollection(scope.NoSupport, "!(", ")");
-
-                var post = new StringBuilder();
-                if (!string.IsNullOrEmpty(pre_support)
-                    || !string.IsNullOrEmpty(pre_nosupport))
-                {
-                    // Add the preamble for the guard
-                    pre.Append("#if ");
-                    post.Append("#endif // ");
-
-                    // Append the "support" clauses because if they don't exist they are string.Empty
-                    pre.Append(pre_support);
-                    post.Append(post_support);
-
-                    // Check if we need to chain the clauses
-                    if (!string.IsNullOrEmpty(pre_support) && !string.IsNullOrEmpty(pre_nosupport))
-                    {
-                        pre.Append(" && ");
-                        post.Append(" && ");
-                    }
-
-                    // Append the "nosupport" clauses because if they don't exist they are string.Empty
-                    pre.Append($"{pre_nosupport}");
-                    post.Append($"{post_nosupport}");
-
-                    pre.Append('\n');
-                    post.Append('\n');
-                }
-
-                return post.ToString();
-            }
-
-            static (string pre, string post) ConvertCollection(in IEnumerable<OSPlatform> platforms, in string prefix, in string suffix)
-            {
-                var pre = new StringBuilder();
-                var post = new StringBuilder();
-
-                var delim = prefix;
-                foreach (OSPlatform os in platforms)
-                {
-                    if (pre.Length != 0)
-                    {
-                        delim = " || ";
-                    }
-
-                    var platformMacroSafe = Regex.Replace(os.ToString(), SafeMacroRegEx, "_").ToUpperInvariant();
-                    pre.Append($"{delim}defined({platformMacroSafe})");
-                    post.Append($"{post}{delim}{platformMacroSafe}");
-                }
-
-                if (pre.Length != 0)
-                {
-                    pre.Append(suffix);
-                    post.Append(suffix);
-                }
-
-                return (pre.ToString(), post.ToString());
-            }
-        }
-
-        private static string GetC99CallConv(SignatureCallingConvention callConv)
-        {
-            return callConv switch
-            {
-                SignatureCallingConvention.CDecl => "DNNE_CALLTYPE_CDECL",
-                SignatureCallingConvention.StdCall => "DNNE_CALLTYPE_STDCALL",
-                SignatureCallingConvention.ThisCall => "DNNE_CALLTYPE_THISCALL",
-                SignatureCallingConvention.FastCall => "DNNE_CALLTYPE_FASTCALL",
-                SignatureCallingConvention.Unmanaged => "DNNE_CALLTYPE",
-                _ => throw new NotSupportedException($"Unknown CallingConvention: {callConv}"),
-            };
-        }
-
-        private struct PlatformSupport
-        {
-            public Scope Assembly { get; init; }
-            public Scope Module { get; init; }
-            public Scope Type { get; init; }
-            public Scope Method { get; init; }
-        }
-
-        private struct Scope
-        {
-            public IEnumerable<OSPlatform> Support { get; init; }
-            public IEnumerable<OSPlatform> NoSupport { get; init; }
-        }
-
-        private class ExportedMethod
-        {
-            public ExportType Type { get; init; }
-            public string EnclosingTypeName { get; init; }
-            public string MethodName { get; init; }
-            public string ExportName { get; init; }
-            public SignatureCallingConvention CallingConvention { get; init; }
-            public PlatformSupport Platforms { get; init; }
-            public string ReturnType { get; init; }
-            public string XmlDoc { get; init; }
-            public ImmutableArray<string> ArgumentTypes { get; init; }
-            public ImmutableArray<string> ArgumentNames { get; init; }
-        }
-
         private enum KnownType
         {
             Unknown,
@@ -969,153 +668,40 @@ $@"#endif // {generatedHeaderDefine}
                 return type == KnownType.SystemType;
             }
         }
+    }
 
-        private class UnusedGenericContext { }
+    internal enum ExportType
+    {
+        None,
+        Export,
+        UnmanagedCallersOnly,
+    }
 
-        private class NotSupportedTypeException : Exception
-        {
-            public string Type { get; private set; }
-            public NotSupportedTypeException(string type) { this.Type = type; }
-        }
+    internal struct PlatformSupport
+    {
+        public Scope Assembly { get; init; }
+        public Scope Module { get; init; }
+        public Scope Type { get; init; }
+        public Scope Method { get; init; }
+    }
 
-        private class C99TypeProvider : ISignatureTypeProvider<string, UnusedGenericContext>
-        {
-            PrimitiveTypeCode? lastUnsupportedPrimitiveType;
+    internal struct Scope
+    {
+        public IEnumerable<OSPlatform> Support { get; init; }
+        public IEnumerable<OSPlatform> NoSupport { get; init; }
+    }
 
-            public string GetArrayType(string elementType, ArrayShape shape)
-            {
-                throw new NotSupportedTypeException(elementType);
-            }
-
-            public string GetByReferenceType(string elementType)
-            {
-                throw new NotSupportedTypeException(elementType);
-            }
-
-            public string GetFunctionPointerType(MethodSignature<string> signature)
-            {
-                // Define the native function pointer type in a comment.
-                string args = this.GetPrimitiveType(PrimitiveTypeCode.Void);
-                if (signature.ParameterTypes.Length != 0)
-                {
-                    var argsBuffer = new StringBuilder();
-                    var delim = "";
-                    foreach (var type in signature.ParameterTypes)
-                    {
-                        argsBuffer.Append(delim);
-                        argsBuffer.Append(type);
-                        delim = ", ";
-                    }
-
-                    args = argsBuffer.ToString();
-                }
-
-                var callingConvention = GetC99CallConv(signature.Header.CallingConvention);
-                var typeComment = $"/* {signature.ReturnType}({callingConvention} *)({args}) */ ";
-                return typeComment + this.GetPrimitiveType(PrimitiveTypeCode.IntPtr);
-            }
-
-            public string GetGenericInstantiation(string genericType, ImmutableArray<string> typeArguments)
-            {
-                throw new NotSupportedTypeException($"Generic - {genericType}");
-            }
-
-            public string GetGenericMethodParameter(UnusedGenericContext genericContext, int index)
-            {
-                throw new NotSupportedTypeException($"Generic - {index}");
-            }
-
-            public string GetGenericTypeParameter(UnusedGenericContext genericContext, int index)
-            {
-                throw new NotSupportedTypeException($"Generic - {index}");
-            }
-
-            public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired)
-            {
-                throw new NotSupportedTypeException($"{modifier} {unmodifiedType}");
-            }
-
-            public string GetPinnedType(string elementType)
-            {
-                throw new NotSupportedTypeException($"Pinned - {elementType}");
-            }
-
-            public string GetPointerType(string elementType)
-            {
-                this.lastUnsupportedPrimitiveType = null;
-                return elementType + "*";
-            }
-
-            public string GetPrimitiveType(PrimitiveTypeCode typeCode)
-            {
-                ThrowIfUnsupportedLastPrimitiveType();
-
-                if (typeCode == PrimitiveTypeCode.Char)
-                {
-                    // Record the current type here with the expectation
-                    // it will be of pointer type to Char, which is supported.
-                    this.lastUnsupportedPrimitiveType = typeCode;
-                    return "DNNE_WCHAR";
-                }
-
-                return typeCode switch
-                {
-                    PrimitiveTypeCode.SByte => "int8_t",
-                    PrimitiveTypeCode.Byte => "uint8_t",
-                    PrimitiveTypeCode.Int16 => "int16_t",
-                    PrimitiveTypeCode.UInt16 => "uint16_t",
-                    PrimitiveTypeCode.Int32 => "int32_t",
-                    PrimitiveTypeCode.UInt32 => "uint32_t",
-                    PrimitiveTypeCode.Int64 => "int64_t",
-                    PrimitiveTypeCode.UInt64 => "uint64_t",
-                    PrimitiveTypeCode.IntPtr => "intptr_t",
-                    PrimitiveTypeCode.UIntPtr => "uintptr_t",
-                    PrimitiveTypeCode.Single => "float",
-                    PrimitiveTypeCode.Double => "double",
-                    PrimitiveTypeCode.Void => "void",
-                    _ => throw new NotSupportedTypeException(typeCode.ToString())
-                };
-            }
-
-            public void ThrowIfUnsupportedLastPrimitiveType()
-            {
-                if (this.lastUnsupportedPrimitiveType.HasValue)
-                {
-                    throw new NotSupportedTypeException(this.lastUnsupportedPrimitiveType.Value.ToString());
-                }
-            }
-
-            public string GetSZArrayType(string elementType)
-            {
-                throw new NotSupportedTypeException($"Array - {elementType}");
-            }
-
-            public string GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind)
-            {
-                return SupportNonPrimitiveTypes(rawTypeKind);
-            }
-
-            public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
-            {
-                return SupportNonPrimitiveTypes(rawTypeKind);
-            }
-
-            public string GetTypeFromSpecification(MetadataReader reader, UnusedGenericContext genericContext, TypeSpecificationHandle handle, byte rawTypeKind)
-            {
-                return SupportNonPrimitiveTypes(rawTypeKind);
-            }
-
-            private static string SupportNonPrimitiveTypes(byte rawTypeKind)
-            {
-                // See https://docs.microsoft.com/dotnet/framework/unmanaged-api/metadata/corelementtype-enumeration
-                const byte ELEMENT_TYPE_VALUETYPE = 0x11;
-                if (rawTypeKind == ELEMENT_TYPE_VALUETYPE)
-                {
-                    return "/* SUPPLY TYPE */";
-                }
-
-                throw new NotSupportedTypeException("Non-primitive");
-            }
-        }
+    internal class ExportedMethod
+    {
+        public ExportType Type { get; init; }
+        public string EnclosingTypeName { get; init; }
+        public string MethodName { get; init; }
+        public string ExportName { get; init; }
+        public SignatureCallingConvention CallingConvention { get; init; }
+        public PlatformSupport Platforms { get; init; }
+        public string ReturnType { get; init; }
+        public string XmlDoc { get; init; }
+        public ImmutableArray<string> ArgumentTypes { get; init; }
+        public ImmutableArray<string> ArgumentNames { get; init; }
     }
 }

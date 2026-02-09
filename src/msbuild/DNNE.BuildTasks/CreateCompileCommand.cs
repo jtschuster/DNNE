@@ -66,6 +66,9 @@ namespace DNNE.BuildTasks
         [Required]
         public string TargetFramework { get; set; }
 
+        [Required]
+        public string Language { get; set; }
+
         // Optional
         public string UserDefinedCompilerFlags { get; set; }
 
@@ -77,6 +80,9 @@ namespace DNNE.BuildTasks
 
         // Optional
         public bool IsSelfContained { get; set; } = false;
+
+        // Optional
+        public string AssemblyVersion { get; set; }
 
         // Used to ensure the supplied path is absolute and
         // can be supplied as-is in a command line scenario.
@@ -139,31 +145,48 @@ Native Build:
     TargetFramework:{TargetFramework}
     ");
 
-            string command;
-            string commandArguments;
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                Windows.ConstructCommandLine(this, out command, out commandArguments);
-            }
-            else
+            string command = string.Empty;
+            string commandArguments = string.Empty;
+            if (Language.Equals("rust", StringComparison.OrdinalIgnoreCase))
             {
                 if (IsTargetingNetFramework)
                 {
-                    throw new NotSupportedException(".NET Framework can only be targeted on Windows");
+                    throw new NotSupportedException("Rust language is not supported when targeting .NET Framework. Use a .NET (Core) target framework instead.");
                 }
 
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                // Rust: generate a Cargo crate instead of compiling.
+                Rust.GenerateCrate(this);
+            }
+            else if (Language.Equals("c99", StringComparison.OrdinalIgnoreCase))
+            {
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    Linux.ConstructCommandLine(this, out command, out commandArguments);
-                }
-                else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                {
-                    macOS.ConstructCommandLine(this, out command, out commandArguments);
+                    Windows.ConstructCommandLine(this, out command, out commandArguments);
                 }
                 else
                 {
-                    throw new NotSupportedException("Unknown native build environment");
+                    if (IsTargetingNetFramework)
+                    {
+                        throw new NotSupportedException(".NET Framework can only be targeted on Windows");
+                    }
+
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    {
+                        Linux.ConstructCommandLine(this, out command, out commandArguments);
+                    }
+                    else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                    {
+                        macOS.ConstructCommandLine(this, out command, out commandArguments);
+                    }
+                    else
+                    {
+                        throw new NotSupportedException("Unknown native build environment");
+                    }
                 }
+            }
+            else
+            {
+                throw new NotSupportedException($"Language '{Language}' is not supported");
             }
 
             this.Command = command;

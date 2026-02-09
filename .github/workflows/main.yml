@@ -23,6 +23,10 @@ jobs:
       with:
         dotnet-version: '8.0.x'
         dotnet-quality: 'ga'
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: 'stable'
     - name: Build Product and Package
       run: dotnet build src/create_package.proj -c ${{ matrix.flavor }}
     - name: Unit Test Product
@@ -35,6 +39,9 @@ jobs:
       run: |
         dotnet clean test/DNNE.UnitTests -c ${{ matrix.flavor }}
         dotnet test test/DNNE.UnitTests -c ${{ matrix.flavor }} -p:BuildWithGPP=true
+    - name: Build test.proj
+      run: |
+        dotnet build test/test.proj -c  ${{ matrix.flavor }} -p:BuildPackage=false
     - name: Upload Build Logs
       if: failure()
       uses: actions/upload-artifact@v4
@@ -59,6 +66,10 @@ jobs:
       with:
         dotnet-version: '8.0.x'
         dotnet-quality: 'ga'
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: 'stable'
     - name: Build Product and Package
       run: dotnet build src\create_package.proj -c ${{ matrix.flavor }}
     - name: Build ExportingAssembly (.NET Core and .NET Framework)
@@ -71,6 +82,9 @@ jobs:
       run: |
         dotnet clean test\DNNE.UnitTests -c ${{ matrix.flavor }}
         dotnet test test\DNNE.UnitTests -c ${{ matrix.flavor }}
+    - name: Build test.proj
+      run: |
+        dotnet build test\test.proj -c  ${{ matrix.flavor }} -p:BuildPackage=false
     - name: Upload Build Logs
       if: failure()
       uses: actions/upload-artifact@v4
@@ -90,6 +104,10 @@ jobs:
       with:
         dotnet-version: '8.0.x'
         dotnet-quality: 'ga'
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: 'stable'
     - name: Build Product and Package
       run: dotnet build src/create_package.proj -c  ${{ matrix.flavor }}
     - name: Unit Test Product
@@ -98,6 +116,9 @@ jobs:
       run: |
         dotnet clean test/DNNE.UnitTests -c ${{ matrix.flavor }}
         dotnet test test/DNNE.UnitTests -c  ${{ matrix.flavor }} -p:BuildWithClangPP=true
+    - name: Build test.proj
+      run: |
+        dotnet build test/test.proj -c  ${{ matrix.flavor }} -p:BuildPackage=false
     - name: Upload Build Logs
       if: failure()
       uses: actions/upload-artifact@v4

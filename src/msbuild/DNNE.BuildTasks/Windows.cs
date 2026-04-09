@@ -57,7 +57,7 @@ namespace DNNE.BuildTasks
             {
                 Architecture.X64 => "Hostx64",
                 Architecture.X86 => "Hostx86",
-                Architecture.Arm64 => "Hostarm64",
+                Architecture.Arm64 => "HostArm64",
                 _ => throw new Exception($"Unsupported host architecture: {RuntimeInformation.ProcessArchitecture}")
             };
             var binDir = Path.Combine(vcToolDir, "bin", hostDir, archDir);

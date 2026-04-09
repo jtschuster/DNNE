@@ -53,8 +53,14 @@ namespace DNNE.BuildTasks
             var vcIncDir = Path.Combine(vcToolDir, "include");
             var libDir = Path.Combine(vcToolDir, "lib", archDir);
 
-            // For now we assume building always happens on a x64 machine.
-            var binDir = Path.Combine(vcToolDir, "bin\\Hostx64", archDir);
+            var hostDir = RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64 => "Hostx64",
+                Architecture.X86 => "Hostx86",
+                Architecture.Arm64 => "Hostarm64",
+                _ => throw new Exception($"Unsupported host architecture: {RuntimeInformation.ProcessArchitecture}")
+            };
+            var binDir = Path.Combine(vcToolDir, "bin", hostDir, archDir);
 
             string compileAsFlag;
             string hostLib;

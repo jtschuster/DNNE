@@ -231,7 +231,7 @@ namespace DNNE.BuildTasks
                 }
             }
 
-            throw new Exception($"No VC host compiler directory found under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
+            throw new Exception($"No VC host compiler directory found. Searched: {string.Join(", ", fallbackHostDirs)} under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
         }
 
         private static bool IsDebug(string config)

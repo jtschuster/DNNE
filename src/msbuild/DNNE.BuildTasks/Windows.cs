@@ -53,8 +53,7 @@ namespace DNNE.BuildTasks
             var vcIncDir = Path.Combine(vcToolDir, "include");
             var libDir = Path.Combine(vcToolDir, "lib", archDir);
 
-            // For now we assume building always happens on a x64 machine.
-            var binDir = Path.Combine(vcToolDir, "bin\\Hostx64", archDir);
+            var binDir = GetVCHostBinDir(vcToolDir, archDir);
 
             string compileAsFlag;
             string hostLib;
@@ -194,6 +193,45 @@ namespace DNNE.BuildTasks
                     _ => throw new Exception("Unsupported target architecture")
                 }
             };
+        }
+
+        private static string GetVCHostBinDir(string vcToolDir, string archDir)
+        {
+            // Determine the preferred host directory based on the current process architecture.
+            string preferredHostDir = RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64 => "Hostx64",
+                Architecture.X86 => "Hostx86",
+                Architecture.Arm64 => "HostArm64",
+                _ => null
+            };
+
+            // Try the preferred host first, then fall back to other hosts in priority order.
+            string[] fallbackHostDirs = new[] { "HostArm64", "Hostx64", "Hostx86" };
+
+            if (preferredHostDir != null)
+            {
+                string preferredPath = Path.Combine(vcToolDir, "bin", preferredHostDir, archDir);
+                if (Directory.Exists(preferredPath))
+                {
+                    return preferredPath;
+                }
+            }
+
+            foreach (var hostDir in fallbackHostDirs)
+            {
+                // Skip the preferred host since we already tried it.
+                if (hostDir == preferredHostDir)
+                    continue;
+
+                string candidatePath = Path.Combine(vcToolDir, "bin", hostDir, archDir);
+                if (Directory.Exists(candidatePath))
+                {
+                    return candidatePath;
+                }
+            }
+
+            throw new Exception($"No VC host compiler directory found under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
         }
 
         private static bool IsDebug(string config)

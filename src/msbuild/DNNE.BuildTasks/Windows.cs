@@ -187,20 +187,27 @@ namespace DNNE.BuildTasks
             }
 
             // Fall back to other hosts in priority order.
-            foreach (var tgtArch in new[] { Architecture.Arm64, Architecture.X64, Architecture.X86 })
+            List<string> consideredPaths = new();
+            var fallbackHostArchs = new[] { Architecture.Arm64, Architecture.X64, Architecture.X86 };
+            foreach (var tgtArch in fallbackHostArchs)
             {
                 // Skip the preferred host since we already tried it.
                 if (tgtArch == RuntimeInformation.ProcessArchitecture)
                     continue;
 
-                string candidatePath = Path.Combine(vcToolDir, "bin", HostSubDirectory(tgtArch), archDir);
+                string hostDir = HostSubDirectory(tgtArch);
+                string candidatePath = Path.Combine(vcToolDir, "bin", hostDir, archDir);
                 if (Directory.Exists(candidatePath))
                 {
                     return candidatePath;
                 }
+
+                consideredPaths.Add(hostDir);
             }
 
-            throw new Exception($"No VC host compiler directory found. Searched: {string.Join(", ", fallbackHostDirs)} under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
+            
+
+            throw new Exception($"No VC host compiler directory found. Searched: {string.Join(", ", consideredPaths} under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
 
             static string HostSubDirectory(Architecture arch)
             {

@@ -176,17 +176,7 @@ namespace DNNE.BuildTasks
         private static string GetVCHostBinDir(string vcToolDir, string archDir)
         {
             // Determine the preferred host directory based on the current process architecture.
-            string preferredHostDir = RuntimeInformation.ProcessArchitecture switch
-            {
-                Architecture.X64 => "Hostx64",
-                Architecture.X86 => "Hostx86",
-                Architecture.Arm64 => "HostArm64",
-                _ => null
-            };
-
-            // Try the preferred host first, then fall back to other hosts in priority order.
-            string[] fallbackHostDirs = new[] { "HostArm64", "Hostx64", "Hostx86" };
-
+            string preferredHostDir = HostSubDirectory(RuntimeInformation.ProcessArchitecture);
             if (preferredHostDir != null)
             {
                 string preferredPath = Path.Combine(vcToolDir, "bin", preferredHostDir, archDir);
@@ -196,7 +186,8 @@ namespace DNNE.BuildTasks
                 }
             }
 
-            foreach (var hostDir in fallbackHostDirs)
+            // Fall back to other hosts in priority order.
+            foreach (var hostDir in new[] { Architecture.Arm64, Architecture.X64, Architecture.X86 })
             {
                 // Skip the preferred host since we already tried it.
                 if (hostDir == preferredHostDir)
@@ -210,6 +201,17 @@ namespace DNNE.BuildTasks
             }
 
             throw new Exception($"No VC host compiler directory found. Searched: {string.Join(", ", fallbackHostDirs)} under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
+
+            static string HostSubDirectory(Architecture arch)
+            {
+                return arch switch
+                {
+                    Architecture.X64 => "Hostx64",
+                    Architecture.X86 => "Hostx86",
+                    Architecture.Arm64 => "HostArm64",
+                    _ => null
+                };
+            }
         }
 
 

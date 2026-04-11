@@ -187,13 +187,13 @@ namespace DNNE.BuildTasks
             }
 
             // Fall back to other hosts in priority order.
-            foreach (var hostDir in new[] { Architecture.Arm64, Architecture.X64, Architecture.X86 })
+            foreach (var tgtArch in new[] { Architecture.Arm64, Architecture.X64, Architecture.X86 })
             {
                 // Skip the preferred host since we already tried it.
-                if (hostDir == preferredHostDir)
+                if (tgtArch == RuntimeInformation.ProcessArchitecture)
                     continue;
 
-                string candidatePath = Path.Combine(vcToolDir, "bin", hostDir, archDir);
+                string candidatePath = Path.Combine(vcToolDir, "bin", HostSubDirectory(tgtArch), archDir);
                 if (Directory.Exists(candidatePath))
                 {
                     return candidatePath;

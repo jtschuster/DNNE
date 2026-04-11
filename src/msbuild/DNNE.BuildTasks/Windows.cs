@@ -214,7 +214,6 @@ namespace DNNE.BuildTasks
             }
         }
 
-
         private static string ConvertToVCArchSubDir(string arch, string rid)
         {
             return arch.ToLower() switch

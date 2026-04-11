@@ -205,9 +205,7 @@ namespace DNNE.BuildTasks
                 consideredPaths.Add(hostDir);
             }
 
-            
-
-            throw new Exception($"No VC host compiler directory found. Searched: {string.Join(", ", consideredPaths} under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
+            throw new Exception($"No VC host compiler directory found. Searched: {string.Join(", ", consideredPaths)} under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
 
             static string HostSubDirectory(Architecture arch)
             {

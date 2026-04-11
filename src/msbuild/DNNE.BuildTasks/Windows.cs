@@ -53,8 +53,7 @@ namespace DNNE.BuildTasks
             var vcIncDir = Path.Combine(vcToolDir, "include");
             var libDir = Path.Combine(vcToolDir, "lib", archDir);
 
-            // For now we assume building always happens on a x64 machine.
-            var binDir = Path.Combine(vcToolDir, "bin\\Hostx64", archDir);
+            var binDir = GetVCHostBinDir(vcToolDir, archDir);
 
             string compileAsFlag;
             string hostLib;
@@ -172,6 +171,52 @@ namespace DNNE.BuildTasks
 
             command = Path.Combine(binDir, "cl.exe");
             commandArguments = $"{compilerFlags} \"{export.Source}\" \"{platformTU}\" /link {linkerFlags}";
+        }
+
+        private static string GetVCHostBinDir(string vcToolDir, string archDir)
+        {
+            // Determine the preferred host directory based on the current process architecture.
+            string preferredHostDir = HostSubDirectory(RuntimeInformation.ProcessArchitecture);
+            if (preferredHostDir != null)
+            {
+                string preferredPath = Path.Combine(vcToolDir, "bin", preferredHostDir, archDir);
+                if (Directory.Exists(preferredPath))
+                {
+                    return preferredPath;
+                }
+            }
+
+            // Fall back to other hosts in priority order.
+            List<string> consideredPaths = new();
+            var fallbackHostArchs = new[] { Architecture.Arm64, Architecture.X64, Architecture.X86 };
+            foreach (var tgtArch in fallbackHostArchs)
+            {
+                // Skip the preferred host since we already tried it.
+                if (tgtArch == RuntimeInformation.ProcessArchitecture)
+                    continue;
+
+                string hostDir = HostSubDirectory(tgtArch);
+                string candidatePath = Path.Combine(vcToolDir, "bin", hostDir, archDir);
+                if (Directory.Exists(candidatePath))
+                {
+                    return candidatePath;
+                }
+
+                consideredPaths.Add(hostDir);
+            }
+
+            throw new Exception($"No VC host compiler directory found. Searched: {string.Join(", ", consideredPaths)} under '{Path.Combine(vcToolDir, "bin")}' for target '{archDir}'.");
+
+            static string HostSubDirectory(Architecture arch)
+            {
+                return arch switch
+                {
+                    Architecture.X64 => "Hostx64",
+                    Architecture.X86 => "Hostx86",
+                    Architecture.Arm64 => "HostArm64",
+                    _ => null
+                };
+            }
         }
 
         private static string ConvertToVCArchSubDir(string arch, string rid)

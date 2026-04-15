@@ -22,6 +22,7 @@ using Microsoft.VisualStudio.Setup.Configuration;
 using Microsoft.Win32;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -31,7 +32,8 @@ namespace DNNE.BuildTasks
 {
     public class Windows
     {
-        private static readonly Lazy<string> g_VsInstallPath = new Lazy<string>(GetLatestVSWithVCInstallPath, true);
+        private static readonly ConcurrentDictionary<string, string> g_VsInstallPaths = new ConcurrentDictionary<string, string>();
+        private static string GetVsInstallPath(string arch) => g_VsInstallPaths.GetOrAdd(arch, GetLatestVSWithVCInstallPath);
         private static readonly Lazy<SDK> g_WinSdk = new Lazy<SDK>(GetLatestWinSDK, true);
         private static readonly Lazy<SDK> g_NetFxSdk = new Lazy<SDK>(GetLatestNetFxSDK, true);
 
@@ -41,7 +43,7 @@ namespace DNNE.BuildTasks
 
             SDK winSdk = g_WinSdk.Value;
             SDK netFxSdk = default;
-            string vsInstall = g_VsInstallPath.Value;
+            string vsInstall = GetVsInstallPath(export.Architecture);
             string vcToolDir = GetVCToolsRootDir(vsInstall);
             export.Report(CreateCompileCommand.DevImportance, $"VS Install: {vsInstall}\nVC Tools: {vcToolDir}\nWinSDK Version: {winSdk.Version}");
 
@@ -283,10 +285,18 @@ namespace DNNE.BuildTasks
             return latestPath ?? throw new Exception("Unknown VC Tools version found.");
         }
 
-        private static string GetLatestVSWithVCInstallPath()
+        private static string GetLatestVSWithVCInstallPath(string arch)
         {
             var setupConfig = new SetupConfiguration();
             IEnumSetupInstances enumInst = setupConfig.EnumInstances();
+            var neededPkgId = arch switch
+            {
+                "x64" => "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "x86" => "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "arm64" => "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+                "arm" => "Microsoft.VisualStudio.Component.VC.Tools.ARM",
+                _ => throw new NotImplementedException("Unsupported architecture")
+            };
 
             var latestVersion = new Version();
             ISetupInstance latestVsInstance = null;
@@ -307,8 +317,7 @@ namespace DNNE.BuildTasks
                 foreach (var n in pkgs)
                 {
                     var pkgId = n.GetId();
-                    if (pkgId.Equals("Microsoft.VisualStudio.Component.VC.Tools.x86.x64")
-                        || pkgId.Equals("Microsoft.VisualStudio.Component.VC.Tools.ARM64"))
+                    if (pkgId.Equals(neededPkgId))
                     {
                         if (latestVersion < ver)
                         {

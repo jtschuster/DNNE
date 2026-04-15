@@ -32,8 +32,10 @@ namespace DNNE.BuildTasks
 {
     public class Windows
     {
+        // Simple lazy dictionary for storing VS install paths by architecture
         private static readonly ConcurrentDictionary<string, string> g_VsInstallPaths = new ConcurrentDictionary<string, string>();
         private static string GetVsInstallPath(string arch) => g_VsInstallPaths.GetOrAdd(arch, GetLatestVSWithVCInstallPath);
+
         private static readonly Lazy<SDK> g_WinSdk = new Lazy<SDK>(GetLatestWinSDK, true);
         private static readonly Lazy<SDK> g_NetFxSdk = new Lazy<SDK>(GetLatestNetFxSDK, true);
 
@@ -43,19 +45,17 @@ namespace DNNE.BuildTasks
 
             SDK winSdk = g_WinSdk.Value;
             SDK netFxSdk = default;
-            string vsInstall = GetVsInstallPath(export.Architecture);
+            string vcArch = ConvertToVCArchString(export.Architecture, export.RuntimeID);
+            string vsInstall = GetVsInstallPath(vcArch);
             string vcToolDir = GetVCToolsRootDir(vsInstall);
             export.Report(CreateCompileCommand.DevImportance, $"VS Install: {vsInstall}\nVC Tools: {vcToolDir}\nWinSDK Version: {winSdk.Version}");
 
             bool isDebug = IsDebug(export.Configuration);
 
-            string archDir = ConvertToVCArchSubDir(export.Architecture, export.RuntimeID);
-
             // VC inc and lib paths
             var vcIncDir = Path.Combine(vcToolDir, "include");
-            var libDir = Path.Combine(vcToolDir, "lib", archDir);
-
-            var binDir = GetVCHostBinDir(vcToolDir, archDir);
+            var libDir = Path.Combine(vcToolDir, "lib", vcArch);
+            var binDir = GetVCHostBinDir(vcToolDir, vcArch);
 
             string compileAsFlag;
             string hostLib;
@@ -146,7 +146,7 @@ namespace DNNE.BuildTasks
             // Add WinSDK lib paths
             foreach (var libPath in winSdk.LibPaths)
             {
-                linkerFlags.Append($"/LIBPATH:\"{Path.Combine(libPath, archDir)}\" ");
+                linkerFlags.Append($"/LIBPATH:\"{Path.Combine(libPath, vcArch)}\" ");
             }
 
             if (export.IsTargetingNetFramework)
@@ -154,7 +154,7 @@ namespace DNNE.BuildTasks
                 // Add NetFx lib paths
                 foreach (var libPath in netFxSdk.LibPaths)
                 {
-                    linkerFlags.Append($"/LIBPATH:\"{Path.Combine(libPath, archDir)}\" ");
+                    linkerFlags.Append($"/LIBPATH:\"{Path.Combine(libPath, vcArch)}\" ");
                 }
             }
 
@@ -221,7 +221,7 @@ namespace DNNE.BuildTasks
             }
         }
 
-        private static string ConvertToVCArchSubDir(string arch, string rid)
+        private static string ConvertToVCArchString(string arch, string rid)
         {
             return arch.ToLower() switch
             {
@@ -295,7 +295,7 @@ namespace DNNE.BuildTasks
                 "x86" => "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
                 "arm64" => "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
                 "arm" => "Microsoft.VisualStudio.Component.VC.Tools.ARM",
-                _ => throw new NotImplementedException("Unsupported architecture")
+                _ => throw new NotImplementedException($"Unsupported architecture: '{arch}'")
             };
 
             var latestVersion = new Version();
@@ -316,6 +316,7 @@ namespace DNNE.BuildTasks
                 ISetupPackageReference[] pkgs = vsInst.GetPackages();
                 foreach (var n in pkgs)
                 {
+                    n.GetVersion();
                     var pkgId = n.GetId();
                     if (pkgId.Equals(neededPkgId))
                     {

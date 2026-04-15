@@ -316,7 +316,6 @@ namespace DNNE.BuildTasks
                 ISetupPackageReference[] pkgs = vsInst.GetPackages();
                 foreach (var n in pkgs)
                 {
-                    n.GetVersion();
                     var pkgId = n.GetId();
                     if (pkgId.Equals(neededPkgId))
                     {

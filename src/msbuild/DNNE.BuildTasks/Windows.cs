@@ -294,7 +294,6 @@ namespace DNNE.BuildTasks
                 "x64" => "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
                 "x86" => "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
                 "arm64" => "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
-                "arm" => "Microsoft.VisualStudio.Component.VC.Tools.ARM",
                 _ => throw new NotImplementedException($"Unsupported architecture: '{arch}'")
             };
 
